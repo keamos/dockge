@@ -41,7 +41,7 @@ export class AgentMaintenance {
                             Image: containerInfo.Image,
                             Created: containerInfo.CreatedAt,
                             Status: containerInfo.Status,
-                            IPAddress: ipAddress
+                            IPAddress: [ ipAddress, this.ipToSortableNumber(ipAddress) ]
                         },
                         dangling: containerInfo.Status.startsWith("Exited"),
                         danglingLabel: "stopped",
@@ -61,18 +61,47 @@ export class AgentMaintenance {
             const inspectRes = await childProcessAsync.spawn("docker", [
                 "inspect",
                 "--format",
-                "{{range .NetworkSettings.Networks}}{{.IPAddress}} {{end}}",
+                "{{.HostConfig.NetworkMode}}|{{range .NetworkSettings.Networks}}{{.IPAddress}} {{end}}",
                 containerId
             ], {
                 encoding: "utf-8",
             });
 
-            const ips = inspectRes.stdout?.toString().trim();
-            return ips && ips.length > 0 ? ips.split(" ").filter(Boolean).join(", ") : "-";
+            const output = inspectRes.stdout?.toString().trim() ?? "";
+            const separatorIndex = output.indexOf("|");
+            const networkMode = separatorIndex >= 0 ? output.slice(0, separatorIndex) : "";
+            const ips = separatorIndex >= 0 ? output.slice(separatorIndex + 1).trim() : "";
+
+            if (networkMode === "host") {
+                return "Host";
+            }
+
+            return ips.length > 0 ? ips.split(" ").filter(Boolean).join(", ") : "-";
         } catch (e) {
             log.error("getContainerIPAddress", e);
             return "-";
         }
+    }
+
+    /**
+     * Converts an IPv4 address (or the first of a comma-separated list) into a single
+     * number so it can be sorted numerically instead of alphabetically (which would put
+     * "192.168.2.201" between "192.168.2.20" and "192.168.2.30").
+     * Containers without an IP (stopped, host networking, etc.) sort to the bottom.
+     */
+    private ipToSortableNumber(ipAddress: string): number {
+        if (!ipAddress || ipAddress === "-") {
+            return -1;
+        }
+
+        const firstIp = ipAddress.split(",")[0].trim();
+        const octets = firstIp.split(".").map(Number);
+
+        if (octets.length !== 4 || octets.some((octet) => Number.isNaN(octet) || octet < 0 || octet > 255)) {
+            return -1;
+        }
+
+        return ((octets[0] * 256 + octets[1]) * 256 + octets[2]) * 256 + octets[3];
     }
 
     async getImageData(): Promise<DockerArtefactData> {
