@@ -31,6 +31,7 @@ export class AgentMaintenance {
             for (let line of lines) {
                 if (line != "") {
                     const containerInfo = JSON.parse(line);
+                    const ipAddress = await this.getContainerIPAddress(containerInfo.ID);
 
                     containerData.data.push({
                         id: containerInfo.ID,
@@ -39,7 +40,8 @@ export class AgentMaintenance {
                             Names: containerInfo.Names,
                             Image: containerInfo.Image,
                             Created: containerInfo.CreatedAt,
-                            Status: containerInfo.Status
+                            Status: containerInfo.Status,
+                            IPAddress: ipAddress
                         },
                         dangling: containerInfo.Status.startsWith("Exited"),
                         danglingLabel: "stopped",
@@ -52,6 +54,25 @@ export class AgentMaintenance {
         }
 
         return containerData;
+    }
+
+    private async getContainerIPAddress(containerId: string): Promise<string> {
+        try {
+            const inspectRes = await childProcessAsync.spawn("docker", [
+                "inspect",
+                "--format",
+                "{{range .NetworkSettings.Networks}}{{.IPAddress}} {{end}}",
+                containerId
+            ], {
+                encoding: "utf-8",
+            });
+
+            const ips = inspectRes.stdout?.toString().trim();
+            return ips && ips.length > 0 ? ips.split(" ").filter(Boolean).join(", ") : "-";
+        } catch (e) {
+            log.error("getContainerIPAddress", e);
+            return "-";
+        }
     }
 
     async getImageData(): Promise<DockerArtefactData> {
